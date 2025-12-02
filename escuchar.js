@@ -9,6 +9,23 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Al inicio del archivo, después de los imports
+const MAX_CONCURRENT = process.env.MAX_CONCURRENT_SCRAPES || 5;
+let activeScrapes = 0;
+
+// Middleware de rate limiting
+const rateLimit = require('express-rate-limit');
+const limiter = rateLimit({
+  windowMs: process.env.RATE_LIMIT_WINDOW || 60000,
+  max: process.env.RATE_LIMIT_MAX_REQUESTS || 100,
+  message: {
+    success: false,
+    error: 'Demasiadas solicitudes, por favor intente más tarde'
+  }
+});
+
+app.use('/scrape/product-info', limiter);
+
 // Ruta principal para scraping
 app.post('/scrape', async (req, res) => {
     const { url } = req.body;
@@ -96,11 +113,17 @@ app.post('/scrape/product-info', async (req, res) => {
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function scrapeMercadoLibreWithJSON(url) {
+    while (activeScrapes >= MAX_CONCURRENT) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    activeScrapes++;
+
     console.log('🚀 Iniciando scraping con extracción de JSON...');
     
     // Configuración optimizada para producción con Chromium del sistema
     const browserConfig = {
-        headless: 'new',  // Usar el nuevo headless mode
+        headless: true,  // Usar el nuevo headless mode
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -109,12 +132,12 @@ async function scrapeMercadoLibreWithJSON(url) {
             '--no-first-run',
             '--no-zygote',
             '--disable-gpu',
-            '--window-size=1280,800',
-            '--disable-features=site-per-process',
-            '--disable-blink-features=AutomationControlled',
+            '--single-process',
+            '--disable-features=AudioServiceOutOfProcess',
+            '--disable-features=IsolateOrigins',
+            '--disable-site-isolation-trials',
             '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--shm-size=1gb'
+            '--disable-features=BlockInsecurePrivateNetworkRequests'
         ],
         // RUTA CRÍTICA: Usar Chromium del sistema
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 
@@ -122,8 +145,6 @@ async function scrapeMercadoLibreWithJSON(url) {
                        '/usr/bin/chromium-browser' || 
                        '/usr/bin/google-chrome-stable',
         // Configuraciones adicionales para estabilidad
-        ignoreHTTPSErrors: true,
-        defaultViewport: null
     };
     
     console.log('🔧 Configuración de Puppeteer:', {
@@ -193,6 +214,7 @@ async function scrapeMercadoLibreWithJSON(url) {
         throw error;
     } finally {
         if (browser) {
+            activeScrapes--;
             await browser.close();
             console.log('✅ Navegador cerrado');
         }
