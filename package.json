@@ -15,14 +15,8 @@
   "devDependencies": {
     "nodemon": "^3.0.0"
   },
-  "keywords": [
-    "scraping",
-    "mercado-libre",
-    "puppeteer"
-  ],
+  "keywords": ["scraping", "mercado-libre", "puppeteer"],
   "engines": {
-    "node": ">=16.0.0"
-  },
-  "author": "",
-  "license": "ISC"
+    "node": ">=18.0.0"
+  }
 }

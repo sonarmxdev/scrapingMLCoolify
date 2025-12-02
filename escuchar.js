@@ -98,10 +98,11 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 async function scrapeMercadoLibreWithJSON(url) {
     console.log('🚀 Iniciando scraping con extracción de JSON...');
     
-    const browser = await puppeteer.launch({ 
-        headless: true,
+    // Configuración optimizada para producción con Chromium del sistema
+    const browserConfig = {
+        headless: 'new',  // Usar el nuevo headless mode
         args: [
-            '--no-sandbox', 
+            '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
@@ -109,53 +110,71 @@ async function scrapeMercadoLibreWithJSON(url) {
             '--no-zygote',
             '--disable-gpu',
             '--window-size=1280,800',
-            '--single-process'
-        ]
+            '--disable-features=site-per-process',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--shm-size=1gb'
+        ],
+        // RUTA CRÍTICA: Usar Chromium del sistema
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 
+                       '/usr/bin/chromium' || 
+                       '/usr/bin/chromium-browser' || 
+                       '/usr/bin/google-chrome-stable',
+        // Configuraciones adicionales para estabilidad
+        ignoreHTTPSErrors: true,
+        defaultViewport: null
+    };
+    
+    console.log('🔧 Configuración de Puppeteer:', {
+        executablePath: browserConfig.executablePath,
+        headless: browserConfig.headless
     });
     
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
-    
-    // Configurar user agent real
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    
-    // Configurar timeout
-    page.setDefaultTimeout(30000);
-    
-    // Interceptar requests para mejorar performance
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-        // Bloquear recursos innecesarios
-        if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
-            req.abort();
-        } else {
-            req.continue();
-        }
-    });
-    
-    console.log('📄 Navegando a la página...');
-    
+    let browser;
     try {
+        browser = await puppeteer.launch(browserConfig);
+        console.log('✅ Navegador iniciado correctamente');
+        
+        const page = await browser.newPage();
+        
+        // Configurar user agent real
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        
+        // Configurar timeout
+        page.setDefaultTimeout(60000);
+        
+        // Configurar viewport
+        await page.setViewport({ width: 1280, height: 800 });
+        
+        // Interceptar requests para mejorar performance (opcional)
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            // Bloquear recursos innecesarios para acelerar
+            const resourceType = req.resourceType();
+            if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+        
+        console.log('📄 Navegando a la página:', url);
+        
         await page.goto(url, { 
-            waitUntil: 'domcontentloaded',
-            timeout: 60000 
+            waitUntil: 'networkidle0',
+            timeout: 90000 
         });
         
         console.log('✅ Página cargada');
         
-        // Esperar a que los elementos críticos carguen
+        // Esperar a que cargue completamente
         await page.waitForSelector('body', { timeout: 10000 });
         
-        // Esperar un poco más para que cargue el JavaScript
-        await page.waitForFunction(
-            () => document.readyState === 'complete',
-            { timeout: 10000 }
-        );
+        // Esperar un poco más para contenido dinámico
+        await wait(2000);
         
-        // Esperar adicionalmente
-        await wait(3000);
-        
-        // Manejar popups primero
+        // Manejar popups si los hay
         await handlePopups(page);
         
         // Intentar múltiples formas de encontrar el JSON
@@ -165,8 +184,7 @@ async function scrapeMercadoLibreWithJSON(url) {
             console.log('✅ JSON __PRELOADED_STATE__ encontrado');
             return preloadedState;
         } else {
-            console.log('❌ No se encontró el script __PRELOADED_STATE__');
-            // Intentar extraer datos de otra forma
+            console.log('⚠️ No se encontró JSON, extrayendo del DOM...');
             return await extractDataFromPage(page);
         }
         
@@ -174,14 +192,17 @@ async function scrapeMercadoLibreWithJSON(url) {
         console.error('❌ Error durante el scraping:', error);
         throw error;
     } finally {
-        await browser.close();
+        if (browser) {
+            await browser.close();
+            console.log('✅ Navegador cerrado');
+        }
     }
 }
 
 async function findPreloadedState(page) {
     // Método 1: Buscar por ID
     try {
-        await page.waitForSelector('#__PRELOADED_STATE__', { timeout: 5000 });
+        await page.waitForSelector('#__PRELOADED_STATE__', { timeout: 3000 });
         const state1 = await page.evaluate(() => {
             const scriptElement = document.getElementById('__PRELOADED_STATE__');
             if (scriptElement) {
@@ -207,21 +228,6 @@ async function findPreloadedState(page) {
                 const content = script.textContent || script.innerHTML;
                 if (content.includes('__PRELOADED_STATE__')) {
                     try {
-                        // Buscar patrones comunes
-                        const patterns = [
-                            /window\.__PRELOADED_STATE__\s*=\s*({[\s\S]*?});/,
-                            /__PRELOADED_STATE__\s*=\s*({[\s\S]*?});/,
-                            /"pageState":{[\s\S]*?}/,
-                        ];
-                        
-                        for (const pattern of patterns) {
-                            const match = content.match(pattern);
-                            if (match && match[1]) {
-                                return JSON.parse(match[1]);
-                            }
-                        }
-                        
-                        // Si no encuentra patrón, intentar extraer objeto JSON completo
                         const jsonStart = content.indexOf('{');
                         const jsonEnd = content.lastIndexOf('}') + 1;
                         if (jsonStart !== -1 && jsonEnd !== -1) {
@@ -246,12 +252,8 @@ async function findPreloadedState(page) {
             if (window.__PRELOADED_STATE__) {
                 return window.__PRELOADED_STATE__;
             }
-            // También buscar en otras propiedades globales
             if (window.__INITIAL_STATE__) {
                 return window.__INITIAL_STATE__;
-            }
-            if (window.__STATE__) {
-                return window.__STATE__;
             }
             return null;
         });
@@ -260,55 +262,10 @@ async function findPreloadedState(page) {
         console.log('Método 3 falló:', e.message);
     }
 
-    // Método 4: Buscar scripts con tipo application/json
-    try {
-        const state4 = await page.evaluate(() => {
-            const scripts = Array.from(document.querySelectorAll('script[type="application/json"]'));
-            for (const script of scripts) {
-                try {
-                    const content = script.textContent;
-                    if (content && (content.includes('"id"') || content.includes('"price"') || content.includes('pageState'))) {
-                        return JSON.parse(content);
-                    }
-                } catch (e) {
-                    console.error('Error parseando script JSON:', e);
-                }
-            }
-            return null;
-        });
-        if (state4) return state4;
-    } catch (e) {
-        console.log('Método 4 falló:', e.message);
-    }
-
-    // Método 5: Buscar en data attributes
-    try {
-        const state5 = await page.evaluate(() => {
-            const elements = document.querySelectorAll('[data-state], [data-preloaded], [data-initial-state]');
-            for (const element of elements) {
-                try {
-                    const state = element.getAttribute('data-state') || 
-                                 element.getAttribute('data-preloaded') || 
-                                 element.getAttribute('data-initial-state');
-                    if (state) {
-                        return JSON.parse(state);
-                    }
-                } catch (e) {
-                    console.error('Error parseando data attribute:', e);
-                }
-            }
-            return null;
-        });
-        if (state5) return state5;
-    } catch (e) {
-        console.log('Método 5 falló:', e.message);
-    }
-
     return null;
 }
 
 async function extractDataFromPage(page) {
-    // Si no encontramos el JSON, extraemos datos directamente del DOM
     console.log('🔍 Extrayendo datos directamente del DOM...');
     
     const productData = await page.evaluate(() => {
@@ -321,13 +278,8 @@ async function extractDataFromPage(page) {
             const priceElement = document.querySelector(selector);
             if (!priceElement) return null;
             
-            const priceText = priceElement.textContent.replace(/[^\d.,]/g, '').replace(',', '');
+            const priceText = priceElement.textContent.replace(/[^\d.,]/g, '').replace(',', '.');
             return parseFloat(priceText) || null;
-        };
-
-        const getAttribute = (selector, attr) => {
-            const element = document.querySelector(selector);
-            return element ? element.getAttribute(attr) : null;
         };
 
         // Intentar múltiples selectores comunes en Mercado Libre
@@ -356,14 +308,13 @@ async function extractDataFromPage(page) {
                       getText('.item-condition') || 
                       'Nuevo',
             
-            images: Array.from(document.querySelectorAll('.ui-pdp-gallery__figure img, .gallery-image, [data-js="gallery-image"]')).map(img => 
-                img.src || img.getAttribute('data-src') || img.getAttribute('data-zoom')
+            images: Array.from(document.querySelectorAll('.ui-pdp-gallery__figure img, .gallery-image')).map(img => 
+                img.src || img.getAttribute('data-src')
             ).filter(src => src && !src.includes('data:image')),
             
-            available: !!document.querySelector('.ui-pdp-buybox__quantity__available, .stock-available, [data-stock="available"]'),
+            available: !!document.querySelector('.ui-pdp-buybox__quantity__available'),
             
-            location: getText('.ui-pdp-seller__location') || 
-                     getText('.item-location')
+            location: getText('.ui-pdp-seller__location')
         };
     });
 
@@ -390,7 +341,6 @@ async function extractDataFromPage(page) {
 }
 
 function extractProductInfo(preloadedState) {
-    // return preloadedState;
     try {
         // Si es extracción manual
         if (preloadedState.manualExtraction) {
@@ -402,151 +352,70 @@ function extractProductInfo(preloadedState) {
             return preloadedState;
         }
 
-        // Función mejorada para buscar item_status en múltiples ubicaciones
         const findItemStatus = (state) => {
-            console.log('🔍 Buscando item_status en todas las rutas posibles...');
-            
-            // Rutas específicas basadas en el JSON proporcionado
             const paths = [
-                // Rutas principales del track
                 state?.data?.pageState?.initialState?.track?.melidata_event?.event_data?.item_status,
                 state?.data?.pageState?.initialState?.track?.analytics_event?.custom_dimensions?.itemStatus,
-                state?.data?.pageState?.initialState?.track?.gtm_event?.status,
-                
-                // Rutas dentro de components
-                state?.data?.pageState?.initialState?.components?.highlighted_specs_attrs?.viewport_track?.melidata_event?.event_data?.item_status,
-                state?.data?.pageState?.initialState?.components?.highlighted_specs_attrs?.components?.[0]?.action?.track?.melidata_event?.event_data?.item_status,
-                state?.data?.pageState?.initialState?.components?.track?.analytics_event?.custom_dimensions?.customDimensions?.itemStatus,
-                
-                // Rutas directas en el estado inicial
                 initialState?.track?.melidata_event?.event_data?.item_status,
-                initialState?.track?.analytics_event?.custom_dimensions?.itemStatus,
-                initialState?.track?.gtm_event?.status,
-                
-                // Rutas en pageState directo
                 preloadedState?.pageState?.initialState?.track?.melidata_event?.event_data?.item_status,
-                preloadedState?.pageState?.initialState?.track?.analytics_event?.custom_dimensions?.itemStatus
             ];
             
-            console.log('Rutas verificadas:');
-            for (let i = 0; i < paths.length; i++) {
-                if (paths[i]) {
-                    console.log(`✅ Ruta ${i}: ${paths[i]}`);
-                    return paths[i];
-                }
+            for (const path of paths) {
+                if (path) return path;
             }
-            
-            console.log('❌ No se encontró item_status en ninguna ruta');
             return 'unknown';
         };
 
         const components = initialState.components || {};
 
-        console.log('🔍 Buscando item_status en:');
-        console.log('- track path:', initialState.track?.melidata_event?.event_data?.item_status);
-        console.log('- highlighted_specs path:', initialState.components?.highlighted_specs_attrs?.viewport_track?.melidata_event?.event_data?.item_status);
-        
-        // Extraer información estructurada
         const productInfo = {
             id: initialState.id || 'N/A',
-            title: initialState.share?.title || 
-                   components.header?.title || 
-                   'No disponible',
-            
-            price: components.price?.price?.value || 
-                   initialState.track?.melidata_event?.event_data?.price || 
-                   0,
-
+            title: initialState.share?.title || 'No disponible',
+            price: components.price?.price?.value || 0,
             item_status: findItemStatus(preloadedState),
-            
-            currency: components.price?.price?.currency_id || 
-                     initialState.track?.melidata_event?.event_data?.currency_id || 
-                     'MXN',
-            
-            condition: 'Nuevo', // Por defecto
-            
-            available_quantity: components.available_quantity?.quantity_selector?.available_quantity || 
-                               (components.available_quantity?.picker?.description ? 
-                                parseInt(components.available_quantity.picker.description.match(/\d+/)?.[0] || '0') : 0),
-            
+            currency: components.price?.price?.currency_id || 'MXN',
+            condition: 'Nuevo',
+            available_quantity: components.available_quantity?.quantity_selector?.available_quantity || 0,
             sold_quantity: initialState.track?.melidata_event?.event_data?.sold_quantity || 0,
-            
-            permalink: initialState.schema?.[0]?.offers?.url || 
-                      initialState.share?.permalink || 
-                      '',
-            
+            permalink: initialState.share?.permalink || '',
             seller: {
-                id: initialState.track?.melidata_event?.event_data?.seller_id ||
-                    components.seller_data?.viewport_track?.melidata_event?.event_data?.seller_id,
-                
-                name: components.seller_experiment?.title_value ||
-                     components.seller_data?.components?.[0]?.title?.text?.replace('Vendido por ', ''),
-                
-                reputation: components.seller_data?.components?.[1]?.seller_status_info?.title?.text ||
-                           components.seller_data?.components?.[1]?.thermometer_id
+                id: initialState.track?.melidata_event?.event_data?.seller_id,
+                name: components.seller_experiment?.title_value || 'No disponible'
             },
-            
             shipping: {
-                free_shipping: components.shipping_summary?.title?.values?.promise?.text === 'Envío gratis' ||
-                              initialState.track?.melidata_event?.event_data?.free_shipping === true,
-                
-                promise: components.shipping_summary?.title?.values?.promise?.text ||
-                        'No disponible'
-            },
-            
-            payment_methods: components.payment_methods?.payment_methods?.map(method => ({
-                title: method.title?.text,
-                subtitle: method.subtitle?.text,
-                icons: method.icons?.map(icon => icon.name)
-            })) || [],
-            
-            images: components.gallery?.pictures?.map(pic => ({
-                id: pic.id,
-                url: `https://http2.mlstatic.com/D_NQ_NP_${pic.id}-O${pic.sanitized_title}.webp`,
-                alt: pic.alt
-            })) || [],
-            
-            specifications: components.highlighted_specs_attrs?.components?.[1]?.specs || []
+                free_shipping: components.shipping_summary?.title?.values?.promise?.text === 'Envío gratis',
+                promise: components.shipping_summary?.title?.values?.promise?.text || 'No disponible'
+            }
         };
         
         return productInfo;
     } catch (error) {
         console.log('Error extrayendo información del producto:', error);
-        // Devolver el estado completo si hay error
         return preloadedState;
     }
 }
 
 async function handlePopups(page) {
     try {
-        // Esperar un poco antes de buscar popups
-        await wait(2000);
+        await wait(1000);
         
         const popupSelectors = [
             'button[data-testid="action:understood-button"]',
-            'button[data-testid="login"]',
             '.andes-modal__close-button',
             '[aria-label="Cerrar"]',
-            'button[aria-label="Cerrar"]',
-            '.modal-close',
-            '.dy-lb-close',
-            '.onboarding-cp-close'
+            '.modal-close'
         ];
         
         for (const selector of popupSelectors) {
             try {
-                const elements = await page.$$(selector);
-                for (const element of elements) {
-                    try {
-                        await element.click();
-                        console.log(`✅ Cerrado popup con selector: ${selector}`);
-                        await wait(500);
-                    } catch (clickError) {
-                        // Ignorar errores de click
-                    }
+                const element = await page.$(selector);
+                if (element) {
+                    await element.click();
+                    console.log(`✅ Cerrado popup: ${selector}`);
+                    await wait(500);
                 }
             } catch (e) {
-                // Ignorar errores de selectores no encontrados
+                // Ignorar errores
             }
         }
     } catch (error) {
@@ -554,7 +423,7 @@ async function handlePopups(page) {
     }
 }
 
-// Manejo de errores no capturados
+// Manejo de errores
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -569,6 +438,10 @@ app.listen(PORT, () => {
     console.log(`📍 Health check: http://localhost:${PORT}/health`);
     console.log(`📍 Scraping endpoint: http://localhost:${PORT}/scrape`);
     console.log(`📍 Product info endpoint: http://localhost:${PORT}/scrape/product-info`);
+    
+    // Verificar configuración de Puppeteer
+    console.log('🔧 Configuración de Puppeteer:');
+    console.log('- PUPPETEER_EXECUTABLE_PATH:', process.env.PUPPETEER_EXECUTABLE_PATH || 'No definido');
 });
 
 module.exports = app;
