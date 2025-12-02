@@ -1,0 +1,28 @@
+{
+  "name": "mercado-libre-scraper",
+  "version": "1.0.0",
+  "description": "Servidor de scraping para Mercado Libre",
+  "main": "escuchar.js",
+  "scripts": {
+    "start": "node escuchar.js",
+    "dev": "nodemon escuchar.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "puppeteer": "^24.24.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  },
+  "keywords": [
+    "scraping",
+    "mercado-libre",
+    "puppeteer"
+  ],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "author": "",
+  "license": "ISC"
+}
