@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  web-scraper:
+    build: .
+    container_name: mercado-libre-scraper
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    restart: unless-stopped
+    # Configuraciones específicas para Puppeteer en Docker
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+    shm_size: '1gb'
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

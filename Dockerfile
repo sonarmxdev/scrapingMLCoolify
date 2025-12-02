@@ -1,20 +1,30 @@
-FROM node:18-slim
-
-# Instalar Chromium mínimo
-RUN apt-get update && apt-get install -y \
-    chromium \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:18-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
-# Usar npm install simple
-RUN npm install
+# Instalar dependencias necesarias para Puppeteer
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    font-noto-emoji
 
+# Indicar a Puppeteer usar Chromium instalado
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
+# Copiar package.json e instalar dependencias
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Copiar el código de la aplicación
 COPY . .
 
+# Exponer puerto
 EXPOSE 3000
 
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
+# Comando para iniciar
 CMD ["node", "escuchar.js"]
