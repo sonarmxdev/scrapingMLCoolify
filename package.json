@@ -1,21 +1,24 @@
 {
   "name": "mercado-libre-scraper",
   "version": "1.0.0",
-  "description": "Web scraper para Mercado Libre con Puppeteer",
+  "description": "Web scraper para Mercado Libre",
   "main": "escuchar.js",
   "scripts": {
     "start": "node escuchar.js",
-    "dev": "nodemon escuchar.js",
-    "docker:build": "docker build -t mercado-libre-scraper .",
-    "docker:run": "docker run -p 3000:3000 mercado-libre-scraper"
+    "test": "echo \"No tests specified\""
   },
+  "keywords": [
+    "scraping",
+    "mercado-libre",
+    "puppeteer"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
-    "puppeteer": "^21.0.0",
-    "express": "^4.18.2",
-    "cors": "^2.8.5"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
+    "cors": "^2.8.5",
+    "express": "^4.22.1",
+    "express-rate-limit": "^7.5.1",
+    "puppeteer": "^21.11.0"
   },
   "engines": {
     "node": ">=18.0.0"
